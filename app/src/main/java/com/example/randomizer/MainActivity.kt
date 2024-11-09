@@ -1,11 +1,11 @@
 package com.example.randomizer
 
-import android.Manifest
+import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.SpeechRecognizer
+import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -16,11 +16,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -28,7 +29,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.randomizer.ui.theme.RandomizerTheme
 
 class MainActivity : ComponentActivity() {
-    private lateinit var speechRecognizer: SpeechRecognizer
+    lateinit var speechRecognizer: SpeechRecognizer
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,33 +38,31 @@ class MainActivity : ComponentActivity() {
                 AppNavGraph()
             }
         }
+
+        // Initialize the speech recognizer
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+    }
+
+    // Function to start speech recognition
+    fun startListening() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+        speechRecognizer.startListening(intent)
+    }
+
+    // Function to take a photo
+    fun takePhoto(context: Context) {
+        // This could open the camera app or use CameraX to take a photo
+        Toast.makeText(context, "Taking photo!", Toast.LENGTH_SHORT).show()
+
+        val cameraIntent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
+        context.startActivity(cameraIntent)
     }
 
     override fun onStop() {
         super.onStop()
         speechRecognizer.stopListening()
-    }
-
-    private fun startListening() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-
-            val intent = Intent(Intent.ACTION_RECOGNIZE_SPEECH)
-            intent.putExtra(Intent.EXTRA_LANGUAGE_MODEL, "en-US")
-            speechRecognizer.startListening(intent)
-        } else {
-            ActivityCompat.requestPermissions(this,
-                arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA),
-                1)
-        }
-    }
-
-    private fun takePhoto() {
-        // This could open the camera app or use CameraX to take a photo
-        Toast.makeText(this, "Taking photo!", Toast.LENGTH_SHORT).show()
-
-        val cameraIntent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
-        startActivityForResult(cameraIntent, 0)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -79,7 +78,10 @@ fun AppNavGraph() {
     val navController = rememberNavController()
     NavHost(navController = navController, startDestination = "main") {
         composable("main") { MainScreen(navController) }
-        composable("next") { NextScreen() }
+        composable("next") { NextScreen(takePhoto = { context ->
+            // Call MainActivity's takePhoto function
+            (LocalContext.current as MainActivity).takePhoto(context)
+        }) }
     }
 }
 
@@ -105,17 +107,22 @@ fun MainScreen(navController: NavController) {
 }
 
 @Composable
-fun NextScreen() {
+fun NextScreen(takePhoto: (Context) -> Unit) {
     val context = LocalContext.current
-    val speechRecognizer = remember { SpeechRecognizer.createSpeechRecognizer(context) }
+    val activity = LocalContext.current as MainActivity
 
-    // Start listening when the screen appears
+    // State variables to track success
+    val scanSuccess = remember { mutableStateOf(false) }
+    val photoTaken = remember { mutableStateOf(false) }
+
+    // Set up the speech recognition listener
     LaunchedEffect(Unit) {
-        // Start speech recognition as soon as the screen appears
-        startListening(speechRecognizer)
+        // Start listening when the composable is launched
+        activity.startListening()
     }
 
-    // Set up the recognition listener
+    val speechRecognizer = remember { activity.speechRecognizer }
+
     speechRecognizer.setRecognitionListener(object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {}
         override fun onBeginningOfSpeech() {}
@@ -126,7 +133,9 @@ fun NextScreen() {
         override fun onResults(results: Bundle?) {
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             if (matches != null && matches.contains("scan")) {
-                takePhoto(context)
+                scanSuccess.value = true
+                takePhoto(context) // Trigger photo after recognizing "scan"
+                photoTaken.value = true
             }
         }
         override fun onPartialResults(partialResults: Bundle?) {}
@@ -138,16 +147,17 @@ fun NextScreen() {
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        Text(text = "Say 'scan' to take a photo")
+        // Display a message based on the result
+        if (scanSuccess.value && photoTaken.value) {
+            Text(text = "Success! Heard 'scan' and took the photo!")
+        } else if (scanSuccess.value) {
+            Text(text = "Heard 'scan', but no photo was taken.")
+        } else if (photoTaken.value) {
+            Text(text = "Photo taken, but 'scan' was not heard.")
+        } else {
+            Text(text = "Say 'scan' to take a photo.")
+        }
     }
-}
-
-private fun takePhoto(context: Context) {
-    // This could open the camera app or use CameraX to take a photo
-    Toast.makeText(context, "Taking photo!", Toast.LENGTH_SHORT).show()
-
-    val cameraIntent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
-    context.startActivity(cameraIntent)
 }
 
 @Preview(showBackground = true)
